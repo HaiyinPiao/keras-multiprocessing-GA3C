@@ -39,7 +39,7 @@ def log_reward( R ):
 ENV = 'CartPole-v0'
 
 RUN_TIME = 30
-THREADS = 4
+THREADS = 1
 THREAD_DELAY = 0.001
 
 GAMMA = 0.99
@@ -63,7 +63,7 @@ g_train_lock = mp.Lock()
 
 # multiprocess global state queue for action predict
 mgr = mp.Manager()
-g_bPredicted = 0
+g_bPredicted = mp.Value('i', 0)
 g_predict_queue = mgr.dict()
 g_predict_lock = mp.Lock()
 
@@ -157,17 +157,17 @@ class Brain:
 				return 									# we can't yield inside lock
 		
 			s = []
-			for i in range( len(g_predict_queue) )
+			for i in range(len(g_predict_queue)):
 				s.append( g_predict_queue[i] )
 
 			if len(s) > 5*MIN_BATCH: 
 				print("Optimizer alert! Minimizing predict batch of %d" % len(s))
 			
 			p = self.predict_p(s)[0]
-			for i in range( len(g_predict_queue) )
+			for i in range( len(g_predict_queue) ):
 				g_predict_queue[i] = p[i]
 
-			g_bPredicted = 1
+			g_bPredicted.value = 1
 
 
 	def train_push(self, s, a, r, s_):
@@ -226,21 +226,23 @@ class Agent:
 		if random.random() < eps:
 			return random.randint(0, NUM_ACTIONS-1)
 
-		else:
+		else:			
 			s = np.array([s])
 			brain.predict_push( os.getpid(), s )
 
-			# todo lock
-			while not g_bPredicted
-				sleep(0)
-			g_bPredicted = 0
-
+			while True:
+				g_predict_lock.acquire()
+				if not g_bPredicted.value:
+					sleep(0)
+					g_predict_lock.release()
+			g_bPredicted.value = 0
 			p = g_predict_queue[pid]
 			# p = brain.predict_p(s)[0]
 
 			# a = np.argmax(p)
 			a = np.random.choice(NUM_ACTIONS, p=p)
 
+			g_predict_lock.release()
 			return a
 	
 	def train(self, s, a, r, s_):
@@ -310,7 +312,7 @@ class Environment(Process):
 			s = s_
 			R += r
 
-			if done #or self.stop_signal:
+			if done: #or self.stop_signal:
 				break
 
 		log_reward( R )
