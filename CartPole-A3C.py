@@ -10,6 +10,7 @@
 
 import numpy as np
 import tensorflow as tf
+import os
 
 import gym, time, random
 
@@ -61,7 +62,9 @@ g_train_queue = [  mp.Array('f') for i in range(5) ]	# s, a, r, s', s' terminal 
 g_train_lock = mp.Lock()
 
 # multiprocess global state queue for action predict
-g_predict_queue = [ mp.Array('f') ]
+mgr = mp.Manager()
+g_bPredicted = 0
+g_predict_queue = mgr.dict()
 g_predict_lock = mp.Lock()
 
 #---------
@@ -130,39 +133,42 @@ class Brain:
 			s, a, r, s_, s_mask = g_train_queue
 			g_train_queue = [ [], [], [], [], [] ]
 
-		s = np.vstack(s)
-		a = np.vstack(a)
-		r = np.vstack(r)
-		s_ = np.vstack(s_)
-		s_mask = np.vstack(s_mask)
+			s = np.vstack(s)
+			a = np.vstack(a)
+			r = np.vstack(r)
+			s_ = np.vstack(s_)
+			s_mask = np.vstack(s_mask)
 
-		if len(s) > 5*MIN_BATCH: print("Optimizer alert! Minimizing train batch of %d" % len(s))
+			if len(s) > 5*MIN_BATCH: print("Optimizer alert! Minimizing train batch of %d" % len(s))
 
-		v = self.predict_v(s_)
-		r = r + GAMMA_N * v * s_mask	# set v to 0 where s_ is terminal state
-		
-		s_t, a_t, r_t, minimize = self.graph
-		self.session.run(minimize, feed_dict={s_t: s, a_t: a, r_t: r})
+			v = self.predict_v(s_)
+			r = r + GAMMA_N * v * s_mask	# set v to 0 where s_ is terminal state
+			
+			s_t, a_t, r_t, minimize = self.graph
+			self.session.run(minimize, feed_dict={s_t: s, a_t: a, r_t: r})
 
 	def batch_predict(self):
 		with g_predict_lock:
-			if len(g_predict_queue[0]) < MIN_BATCH:
+			if len(g_predict_queue) < MIN_BATCH:
 				time.sleep(0)	# yield
 				return	
 
-			if len(g_predict_queue[0]) < MIN_BATCH:	# more thread could have passed without lock
+			if len(g_predict_queue) < MIN_BATCH:	# more thread could have passed without lock
 				return 									# we can't yield inside lock
 		
-			s = g_predict_queue
-			s = np.vstack(s)
-			g_train_queue = []
+			s = []
+			for i in range( len(g_predict_queue) )
+				s.append( g_predict_queue[i] )
 
-		if len(s) > 5*MIN_BATCH: 
-			print("Optimizer alert! Minimizing predict batch of %d" % len(s))
-		
-		p = self.predict_p(s)[0]
+			if len(s) > 5*MIN_BATCH: 
+				print("Optimizer alert! Minimizing predict batch of %d" % len(s))
+			
+			p = self.predict_p(s)[0]
+			for i in range( len(g_predict_queue) )
+				g_predict_queue[i] = p[i]
 
-		return p
+			g_bPredicted = 1
+
 
 	def train_push(self, s, a, r, s_):
 		with g_train_lock:
@@ -177,9 +183,9 @@ class Brain:
 				g_train_queue[3].append(s_)
 				g_train_queue[4].append(1.)
 
-	def predict_push(self, s, i):
+	def predict_push(self, pid, s):
 		with g_pridict_lock:
-			g_predict_queue.append(s)
+			g_predict_queue[pid] = s
 
 	def predict(self, s):
 		with self.default_graph.as_default():
@@ -222,7 +228,14 @@ class Agent:
 
 		else:
 			s = np.array([s])
-			brain.predict_push( s )
+			brain.predict_push( os.getpid(), s )
+
+			# todo lock
+			while not g_bPredicted
+				sleep(0)
+			g_bPredicted = 0
+
+			p = g_predict_queue[pid]
 			# p = brain.predict_p(s)[0]
 
 			# a = np.argmax(p)
