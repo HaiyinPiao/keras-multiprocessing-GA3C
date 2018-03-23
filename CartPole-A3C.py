@@ -51,14 +51,14 @@ EPS_START = 0.4
 EPS_STOP  = .15
 EPS_STEPS = 75000
 
-MIN_BATCH = 32
+MIN_BATCH = 1
 LEARNING_RATE = 5e-3
 
 LOSS_V = .5			# v loss coefficient
 LOSS_ENTROPY = .01 	# entropy coefficient
 
 # multiprocess global sample queue for batch traning.
-g_train_queue = [  mp.Array('f') for i in range(5) ]	# s, a, r, s', s' terminal mask
+g_train_queue = [  mp.Array('f', 0) for i in range(5) ]	# s, a, r, s', s' terminal mask
 g_train_lock = mp.Lock()
 
 # multiprocess global state queue for action predict
@@ -66,6 +66,28 @@ mgr = mp.Manager()
 g_bPredicted = mp.Value('i', 0)
 g_predict_queue = mgr.dict()
 g_predict_lock = mp.Lock()
+
+def train_push(s, a, r, s_):
+	global g_train_lock
+	global g_train_queue
+	with g_train_lock:
+		g_train_queue[0].append(s)
+		g_train_queue[1].append(a)
+		g_train_queue[2].append(r)
+
+		if s_ is None:
+			g_train_queue[3].append(NONE_STATE)
+			g_train_queue[4].append(0.)
+		else:	
+			g_train_queue[3].append(s_)
+			g_train_queue[4].append(1.)
+
+def predict_push(pid, s):
+	global g_predict_lock
+	global g_predict_queue
+
+	with g_predict_lock:
+		g_predict_queue[pid] = s
 
 #---------
 class Brain:
@@ -122,6 +144,12 @@ class Brain:
 		return s_t, a_t, r_t, minimize
 
 	def batch_optimize(self):
+		global g_train_lock
+		global g_train_queue
+		global g_predict_lock
+		global g_predict_queue
+		global g_bPredicted
+
 		with g_train_lock:
 			if len(g_train_queue[0]) < MIN_BATCH:
 				time.sleep(0)	# yield
@@ -147,7 +175,13 @@ class Brain:
 			s_t, a_t, r_t, minimize = self.graph
 			self.session.run(minimize, feed_dict={s_t: s, a_t: a, r_t: r})
 
+		with g_predict_lock:
+			g_bPredicted.value = 0
+
 	def batch_predict(self):
+		global g_predict_lock
+		global g_predict_queue
+		global g_bPredicted
 		with g_predict_lock:
 			if len(g_predict_queue) < MIN_BATCH:
 				time.sleep(0)	# yield
@@ -157,35 +191,19 @@ class Brain:
 				return 									# we can't yield inside lock
 		
 			s = []
-			for i in range(len(g_predict_queue)):
-				s.append( g_predict_queue[i] )
+			# for i in range(len(g_predict_queue)):
+			for v in g_predict_queue.values():
+				s.append( v )
 
 			if len(s) > 5*MIN_BATCH: 
 				print("Optimizer alert! Minimizing predict batch of %d" % len(s))
 			
-			p = self.predict_p(s)[0]
-			for i in range( len(g_predict_queue) ):
-				g_predict_queue[i] = p[i]
+			p = self.predict_p(s)
+			#for i in range( len(g_predict_queue) ):
+			for v, i in g_predict_queue.values(), range(len(p)):
+				v = p[i]
 
 			g_bPredicted.value = 1
-
-
-	def train_push(self, s, a, r, s_):
-		with g_train_lock:
-			g_train_queue[0].append(s)
-			g_train_queue[1].append(a)
-			g_train_queue[2].append(r)
-
-			if s_ is None:
-				g_train_queue[3].append(NONE_STATE)
-				g_train_queue[4].append(0.)
-			else:	
-				g_train_queue[3].append(s_)
-				g_train_queue[4].append(1.)
-
-	def predict_push(self, pid, s):
-		with g_pridict_lock:
-			g_predict_queue[pid] = s
 
 	def predict(self, s):
 		with self.default_graph.as_default():
@@ -220,30 +238,29 @@ class Agent:
 			return self.eps_start + frames * (self.eps_end - self.eps_start) / self.eps_steps	# linearly interpolate
 
 	def act(self, s):
+		global g_predict_lock
+		global g_predict_queue
+		global g_bPredicted
 		eps = self.getEpsilon()			
 		global frames; frames = frames + 1
 
+		s = np.array([s])
+		predict_push( os.getpid(), s )
+
+		while True:
+			g_predict_lock.acquire()
+			if not g_bPredicted.value:
+				time.sleep(0)
+				g_predict_lock.release()
+		p = g_predict_queue[pid]
+		# p = brain.predict_p(s)[0]
+
+		# a = np.argmax(p)
+		a = np.random.choice(NUM_ACTIONS, p=p)
 		if random.random() < eps:
-			return random.randint(0, NUM_ACTIONS-1)
-
-		else:			
-			s = np.array([s])
-			brain.predict_push( os.getpid(), s )
-
-			while True:
-				g_predict_lock.acquire()
-				if not g_bPredicted.value:
-					sleep(0)
-					g_predict_lock.release()
-			g_bPredicted.value = 0
-			p = g_predict_queue[pid]
-			# p = brain.predict_p(s)[0]
-
-			# a = np.argmax(p)
-			a = np.random.choice(NUM_ACTIONS, p=p)
-
-			g_predict_lock.release()
-			return a
+			a = random.randint(0, NUM_ACTIONS-1)
+		g_predict_lock.release()
+		return a
 	
 	def train(self, s, a, r, s_):
 		def get_sample(memory, n):
@@ -263,7 +280,7 @@ class Agent:
 			while len(self.memory) > 0:
 				n = len(self.memory)
 				s, a, r, s_ = get_sample(self.memory, n)
-				brain.train_push(s, a, r, s_)
+				train_push(s, a, r, s_)
 
 				self.R = ( self.R - self.memory[0][2] ) / GAMMA
 				self.memory.pop(0)		
@@ -272,7 +289,7 @@ class Agent:
 
 		if len(self.memory) >= N_STEP_RETURN:
 			s, a, r, s_ = get_sample(self.memory, N_STEP_RETURN)
-			brain.train_push(s, a, r, s_)
+			train_push(s, a, r, s_)
 
 			self.R = self.R - self.memory[0][2]
 			self.memory.pop(0)	
@@ -281,12 +298,12 @@ class Agent:
 		
 #---------
 # class Environment(threading.Thread):
-class Environment(Process):
-	# stop_signal = False
+class Environment(mp.Process):
+	stop_signal = False
 
 	def __init__(self, render=False, eps_start=EPS_START, eps_end=EPS_STOP, eps_steps=EPS_STEPS):
 		# threading.Thread.__init__(self)
-		Process.__init__(self)
+		mp.Process.__init__(self)
 
 		self.render = render
 		self.env = gym.make(ENV)
@@ -322,8 +339,8 @@ class Environment(Process):
 		while not self.stop_signal:
 			self.runEpisode()
 
-	# def stop(self):
-	# 	self.stop_signal = True
+	def stop(self):
+		self.stop_signal = True
 
 #---------
 # class Optimizer(threading.Thread):
