@@ -171,7 +171,7 @@ class Brain:
 			s.append( item[1][0].tolist() )
 			size += 1
 
-		p = self.predict_p(s)
+		p = self.predict_p( np.array(s) )
 
 		for i in range(size):
 			if ids[i] < len(envs):
@@ -341,7 +341,7 @@ NUM_ACTIONS = env.env.action_space.n
 NONE_STATE = np.zeros(NUM_STATE)
 
 brain = Brain()	# brain is global in A3C
-env_test = Environment(id=0, predict_queue=brain._predict_queue, train_queue=brain._train_queue, train_lock=brain._train_lock, render=True, eps_start=0., eps_end=0.)
+#env_test = Environment(id=0, predict_queue=brain._predict_queue, train_queue=brain._train_queue, train_lock=brain._train_lock, render=True, eps_start=0., eps_end=0.)
 envs = [Environment(id=i, predict_queue=brain._predict_queue, train_queue=brain._train_queue, train_lock=brain._train_lock) for i in range(THREADS)]
 
 for e in envs:
@@ -364,4 +364,4 @@ print("Training finished")
 plt.plot( a_time, a_reward )
 plt.show()
 
-env_test.run()
+#env_test.run()
