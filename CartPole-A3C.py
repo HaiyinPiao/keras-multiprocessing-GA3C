@@ -77,7 +77,8 @@ class Brain:
 		self.default_graph.finalize()	# avoid modifications
 
 		# multiprocess global sample queue for batch traning.
-		self._train_queue = [ mp.Queue() for i in range(5) ]	# s, a, r, s', s' terminal mask
+		# self._train_queue = [ mp.Queue() for i in range(5) ]	# s, a, r, s', s' terminal mask
+		self._train_queue = mp.Queue()
 		self._train_lock = mp.Lock()
 
 		# multiprocess global state queue for action predict
@@ -121,27 +122,41 @@ class Brain:
 
 	def batch_train(self):
 		with self._train_lock:
-			if self._train_queue[0].qsize() < MIN_BATCH:
+			if self._train_queue.qsize() < MIN_BATCH:
 				time.sleep(0)	# yield
 				return
 
-			if self._train_queue[0].qsize() < MIN_BATCH:	# more thread could have passed without lock
+			if self._train_queue.qsize() < MIN_BATCH:	# more thread could have passed without lock
 				return 									# we can't yield inside lock
 
-		s = np.array()
-		a = np.array()
-		r = np.array()
-		s_ = np.array()
-		s_mask = np.array()
+		# s = np.array([])
+		# a = np.array([])
+		# r = np.array([])
+		# s_ = np.array([])
+		# s_mask = np.array([])
 
-		size = 1
-		while not self._train_queue[0].empty():
-			np.concatenate( (s, self._train_queue[0].get()) )
-			np.concatenate( (a, self._train_queue[1].get()) )
-			np.concatenate( (r, self._train_queue[2].get()) )
-			np.concatenate( (s_, self._train_queue[3].get()) )
-			np.concatenate( (s_mask, self._train_queue[4].get()) )
-			size += 1
+		# size = 1
+		# while not self._train_queue.empty():
+		# 	# print( self._train_queue[0].get() )
+		# 	s = np.concatenate( (s, self._train_queue[0].get()) )
+		# 	a = np.concatenate( (a, self._train_queue[1].get()) )
+		# 	r = np.concatenate( (r, self._train_queue[2].get()) )
+		# 	s_ = np.concatenate( (s_, self._train_queue[3].get()) )
+		# 	s_mask_ = np.concatenate( (s_mask, self._train_queue[4].get()) )
+		# 	size += 1
+		# s, a, r, s_, s_mask = np.array([]), np.array([]), np.array([]), np.array([]), np.array([])
+		i = 0
+		while not self._train_queue.empty():
+			s_, a_, r_, s__, s_mask_ = self._train_queue.get()
+			if i==0:
+				s, a, r, s_, s_mask = s_, a_, r_, s__, s_mask_
+			else:
+				s = np.row_stack((s, s_))
+				a = np.row_stack((a, a_))
+				r = np.row_stack( (r, r_) )
+				s_ = np.row_stack((s_, s__))
+				s_mask = np.row_stack( (s_mask, s_mask_) )
+			i += 1
 
 		if len(s) > 5*MIN_BATCH: print("Optimizer alert! Minimizing train batch of %d" % len(s))
 
@@ -193,7 +208,8 @@ class Brain:
 			return v
 
 	def run(self):
-		while time.time()-start<RUN_TIME:
+		#while time.time()-start<RUN_TIME:
+		while True:
 			self.batch_predict()
 			self.batch_train()
 
@@ -242,17 +258,27 @@ class Agent:
 	def train(self, s, a, r, s_):
 
 		def train_push(s, a, r, s_):
-			with self._train_lock:
-				self._train_queue[0].append(s)
-				self._train_queue[1].append(a)
-				self._train_queue[2].append(r)
+			# s_next = s_ is None ? NONE_STATE : s_
+			# s_mask = s_ is None ? 0. : 1.
+			if s_ is None:
+				s_next = NONE_STATE
+				s_mask = 0.
+			else:
+				s_next = s_
+				s_mask = 1.
+			self._train_queue.put( (s, a, r, s_next, s_mask) )
 
-				if s_ is None:
-					self._train_queue[3].append(NONE_STATE)
-					self._train_queue[4].append(0.)
-				else:	
-					self._train_queue[3].append(s_)
-					self._train_queue[4].append(1.)
+			# with self._train_lock:
+			# 	self._train_queue[0].put(s)
+			# 	self._train_queue[1].put(a)
+			# 	self._train_queue[2].put(r)
+
+			# 	if s_ is None:
+			# 		self._train_queue[3].put(NONE_STATE)
+			# 		self._train_queue[4].put(0.)
+			# 	else:	
+			# 		self._train_queue[3].put(s_)
+			# 		self._train_queue[4].put(1.)
 
 		def get_sample(memory, n):
 			s, a, _, _  = memory[0]
