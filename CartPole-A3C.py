@@ -39,7 +39,7 @@ def log_reward( R ):
 ENV = 'CartPole-v0'
 
 RUN_TIME = 30
-THREADS = 1
+THREADS = 64
 THREAD_DELAY = 0.001
 
 GAMMA = 0.99
@@ -150,6 +150,12 @@ class Brain:
 			if self._train_queue.empty():
 				return
 
+			q = self._train_queue
+			while not q.empty():
+				# print(q.get())
+				q.get()
+			return
+
 			i = 0
 			while not self._train_queue.empty():
 				s_, a_, r_, s__, s_mask_ = self._train_queue.get()
@@ -165,7 +171,7 @@ class Brain:
 					s_mask = np.row_stack( (s_mask, s_mask_) )
 				i += 1
 
-				print( s, a, r, s_, s_mask )
+				# print( s, a, r, s_, s_mask )
 
 		# if len(s)==0:
 		# 	return
@@ -345,7 +351,7 @@ class Agent:
 			# 	self.R = ( self.R - self.memory[0][2] ) / GAMMA
 			# 	self.memory.clear()
 
-			# self.R = 0
+			self.R = 0
 			# return
 
 		if len(self.memory) >= N_STEP_RETURN:
@@ -395,7 +401,7 @@ class Environment(mp.Process):
 				break
 
 		log_reward( R )
-		print("Total R:", R)
+		# print("Total R:", R)
 
 	def run(self):
 		while not self.stop_signal:
