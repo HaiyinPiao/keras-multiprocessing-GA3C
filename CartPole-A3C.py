@@ -121,13 +121,13 @@ class Brain:
 		return s_t, a_t, r_t, minimize
 
 	def batch_train(self):
-		with self._train_lock:
-			if self._train_queue.qsize() < MIN_BATCH:
-				time.sleep(0)	# yield
-				return
 
-			if self._train_queue.qsize() < MIN_BATCH:	# more thread could have passed without lock
-				return 									# we can't yield inside lock
+		if self._train_queue.qsize() < MIN_BATCH:
+			time.sleep(0)	# yield
+			return
+
+		if self._train_queue.qsize() < MIN_BATCH:	# more thread could have passed without lock
+			return 									# we can't yield inside lock
 
 		# s = np.array([])
 		# a = np.array([])
@@ -145,18 +145,26 @@ class Brain:
 		# 	s_mask_ = np.concatenate( (s_mask, self._train_queue[4].get()) )
 		# 	size += 1
 		# s, a, r, s_, s_mask = np.array([]), np.array([]), np.array([]), np.array([]), np.array([])
-		i = 0
-		while not self._train_queue.empty():
-			s_, a_, r_, s__, s_mask_ = self._train_queue.get()
-			if i==0:
-				s, a, r, s_, s_mask = s_, a_, r_, s__, s_mask_
-			else:
-				s = np.row_stack((s, s_))
-				a = np.row_stack((a, a_))
-				r = np.row_stack( (r, r_) )
-				s_ = np.row_stack((s_, s__))
-				s_mask = np.row_stack( (s_mask, s_mask_) )
-			i += 1
+		with self._train_lock:
+
+			if self._train_queue.empty():
+				return
+
+			i = 0
+			while not self._train_queue.empty():
+				s_, a_, r_, s__, s_mask_ = self._train_queue.get()
+				if i==0:
+					s, a, r, s_, s_mask = s_, a_, r_, s__, s_mask_
+				else:
+					s = np.row_stack((s, s_))
+					a = np.row_stack((a, a_))
+					r = np.row_stack( (r, r_) )
+					s_ = np.row_stack((s_, s__))
+					s_mask = np.row_stack( (s_mask, s_mask_) )
+				i += 1
+
+		# if len(s)==0:
+		# 	return
 
 		if len(s) > 5*MIN_BATCH: print("Optimizer alert! Minimizing train batch of %d" % len(s))
 
@@ -169,28 +177,43 @@ class Brain:
 	def batch_predict(self):
 		global envs
 
-		with self._predict_lock:
-			if self._predict_queue.qsize() < MIN_BATCH:
-				time.sleep(0)	# yield
-				return	
+		if self._predict_queue.qsize() < MIN_BATCH:
+			time.sleep(0)	# yield
+			return
 
 			if self._predict_queue.qsize() < MIN_BATCH:	# more thread could have passed without lock
 				return
 				 									# we can't yield inside lock
-		ids = []
-		s = []
-		size = 0
-		while not self._predict_queue.empty():
-			item = self._predict_queue.get()
-			ids.append( item[0] )
-			s.append( item[1][0].tolist() )
-			size += 1
+			# print( self._predict_queue.qsize() )
+			# print(self._predict_queue.empty())
+		with self._predict_lock:
+			# ids = []
+			# s = []
 
-		p = self.predict_p( np.array(s) )
+			if self._predict_queue.empty():
+				return
 
-		for i in range(size):
-			if ids[i] < len(envs):
-				envs[ids[i]].agent.wait_q.put(p[i])
+			i = 0
+			while not self._predict_queue.empty():
+				id_, s_ = self._predict_queue.get()
+				if i==0:
+					id, s = id_, s_
+				else:
+				# item = self._predict_queue.get()
+				# print( item )
+					id = np.row_stack((id, id_))
+					s = np.row_stack((s, s_))
+				i += 1
+
+		# if len(s)==0:
+		# 	return
+
+		print(s)
+		p = self.predict_p(np.array(s))
+
+		for j in range(i):
+			if id[j][0] < len(envs):
+				envs[id[j][0]].agent.wait_q.put(p[j])
 
 	def predict(self, s):
 		with self.default_graph.as_default():
@@ -216,7 +239,7 @@ class Brain:
 #---------
 frames = 0
 class Agent:
-	def __init__(self, id, eps_start, eps_end, eps_steps, predict_queue, train_queue, train_lock):
+	def __init__(self, id, eps_start, eps_end, eps_steps, predict_queue, predict_lock, train_queue, train_lock):
 		self.id = id
 		self.eps_start = eps_start
 		self.eps_end   = eps_end
@@ -228,6 +251,7 @@ class Agent:
 		# for predicted nn output dispatching
 		self.wait_q = mp.Queue(maxsize=1)
 		self._predict_queue = predict_queue
+		self._predict_lock = predict_lock
 
 		# for training
 		self._train_queue = train_queue
@@ -245,7 +269,8 @@ class Agent:
 
 		s = np.array([s])
 		# put the state in the prediction q
-		self._predict_queue.put((self.id, s))
+		with self._predict_lock:
+			self._predict_queue.put((self.id, s))
 		# wait for the prediction to come back
 		p = self.wait_q.get()
 
@@ -260,13 +285,14 @@ class Agent:
 		def train_push(s, a, r, s_):
 			# s_next = s_ is None ? NONE_STATE : s_
 			# s_mask = s_ is None ? 0. : 1.
-			if s_ is None:
-				s_next = NONE_STATE
-				s_mask = 0.
-			else:
-				s_next = s_
-				s_mask = 1.
-			self._train_queue.put( (s, a, r, s_next, s_mask) )
+			with self._train_lock:
+				if s_ is None:
+					s_next = NONE_STATE
+					s_mask = 0.
+				else:
+					s_next = s_
+					s_mask = 1.
+				self._train_queue.put( (s, a, r, s_next, s_mask) )
 
 			# with self._train_lock:
 			# 	self._train_queue[0].put(s)
@@ -300,16 +326,24 @@ class Agent:
 				train_push(s, a, r, s_)
 
 				self.R = ( self.R - self.memory[0][2] ) / GAMMA
-				self.memory.pop(0)		
+				self.memory.pop(0)
+			# if len(self.memory) > 0:
+			# 	n = len(self.memory)
+			# 	s, a, r, s_ = get_sample(self.memory, n)
+			# 	train_push(s, a, r, s_)
 
-			self.R = 0
+			# 	self.R = ( self.R - self.memory[0][2] ) / GAMMA
+			# 	self.memory.clear()
+
+			# self.R = 0
+			# return
 
 		if len(self.memory) >= N_STEP_RETURN:
 			s, a, r, s_ = get_sample(self.memory, N_STEP_RETURN)
 			train_push(s, a, r, s_)
 
 			self.R = self.R - self.memory[0][2]
-			self.memory.pop(0)	
+			self.memory.pop(0)
 	
 	# possible edge case - if an episode ends in <N steps, the computation is incorrect
 		
@@ -318,14 +352,14 @@ class Agent:
 class Environment(mp.Process):
 	stop_signal = False
 
-	def __init__(self, id, predict_queue, train_queue, train_lock, render=False, eps_start=EPS_START, eps_end=EPS_STOP, eps_steps=EPS_STEPS):
+	def __init__(self, id, predict_queue, predict_lock, train_queue, train_lock, render=False, eps_start=EPS_START, eps_end=EPS_STOP, eps_steps=EPS_STEPS):
 		# threading.Thread.__init__(self)
 		mp.Process.__init__(self)
 
 		self.id = id
 		self.render = render
 		self.env = gym.make(ENV)
-		self.agent = Agent(id, eps_start, eps_end, eps_steps, predict_queue, train_queue, train_lock)
+		self.agent = Agent(id, eps_start, eps_end, eps_steps, predict_queue, predict_lock, train_queue, train_lock)
 
 	def runEpisode(self):
 		s = self.env.reset()
@@ -368,7 +402,7 @@ NONE_STATE = np.zeros(NUM_STATE)
 
 brain = Brain()	# brain is global in A3C
 #env_test = Environment(id=0, predict_queue=brain._predict_queue, train_queue=brain._train_queue, train_lock=brain._train_lock, render=True, eps_start=0., eps_end=0.)
-envs = [Environment(id=i, predict_queue=brain._predict_queue, train_queue=brain._train_queue, train_lock=brain._train_lock) for i in range(THREADS)]
+envs = [Environment(id=i, predict_queue=brain._predict_queue, predict_lock=brain._predict_lock, train_queue=brain._train_queue, train_lock=brain._train_lock) for i in range(THREADS)]
 
 for e in envs:
 	e.start()
