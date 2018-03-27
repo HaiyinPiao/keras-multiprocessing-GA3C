@@ -39,7 +39,7 @@ def log_reward( R ):
 ENV = 'CartPole-v0'
 
 RUN_TIME = 30
-THREADS = 2
+THREADS = 1
 THREAD_DELAY = 0.001
 
 GAMMA = 0.99
@@ -51,7 +51,7 @@ EPS_START = 0.4
 EPS_STOP  = .15
 EPS_STEPS = 75000
 
-MIN_BATCH = 2
+MIN_BATCH = 1
 LEARNING_RATE = 5e-3
 
 LOSS_V = .5			# v loss coefficient
@@ -153,15 +153,19 @@ class Brain:
 			i = 0
 			while not self._train_queue.empty():
 				s_, a_, r_, s__, s_mask_ = self._train_queue.get()
+				# if s__ == NONE_STATE:
+				# 	shoooot = 1
 				if i==0:
 					s, a, r, s_, s_mask = s_, a_, r_, s__, s_mask_
 				else:
 					s = np.row_stack((s, s_))
 					a = np.row_stack((a, a_))
-					r = np.row_stack( (r, r_) )
+					r = np.row_stack((r, r_))
 					s_ = np.row_stack((s_, s__))
 					s_mask = np.row_stack( (s_mask, s_mask_) )
 				i += 1
+
+				print( s, a, r, s_, s_mask )
 
 		# if len(s)==0:
 		# 	return
@@ -194,26 +198,27 @@ class Brain:
 				return
 
 			i = 0
+			id = []
 			while not self._predict_queue.empty():
 				id_, s_ = self._predict_queue.get()
 				if i==0:
-					id, s = id_, s_
+					s = s_
 				else:
 				# item = self._predict_queue.get()
 				# print( item )
-					id = np.row_stack((id, id_))
+				# 	id = np.row_stack((id, id_))
 					s = np.row_stack((s, s_))
+				id.append(id_)
 				i += 1
 
 		# if len(s)==0:
 		# 	return
 
-		print(s)
 		p = self.predict_p(np.array(s))
 
 		for j in range(i):
-			if id[j][0] < len(envs):
-				envs[id[j][0]].agent.wait_q.put(p[j])
+			if id[j] < len(envs):
+				envs[id[j]].agent.wait_q.put(p[j])
 
 	def predict(self, s):
 		with self.default_graph.as_default():
@@ -292,6 +297,11 @@ class Agent:
 				else:
 					s_next = s_
 					s_mask = 1.
+				s = np.array([s])
+				a = np.array([a])
+				r = np.array([r])
+				s_next = np.array([s_next])
+				s_mask = np.array([s_mask])
 				self._train_queue.put( (s, a, r, s_next, s_mask) )
 
 			# with self._train_lock:
