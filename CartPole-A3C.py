@@ -28,18 +28,18 @@ import matplotlib.pyplot as plt
 import datetime
 start = time.time()
 
-a_time = []
-a_reward = []
+a_time = mp.Queue()
+a_reward = mp.Queue()
 
 def log_reward( R ):
-	a_time.append( time.time() - start )
-	a_reward.append( R )
+	a_time.put( time.time() - start )
+	a_reward.put( R )
 
 #-- constants
 ENV = 'CartPole-v0'
 
 RUN_TIME = 30
-THREADS = 1
+THREADS = 20
 THREAD_DELAY = 0.001
 
 GAMMA = 0.99
@@ -158,27 +158,24 @@ class Brain:
 
 			i = 0
 			while not self._train_queue.empty():
-				s_, a_, r_, s__, s_mask_ = self._train_queue.get()
+				s_, a_, r_, s_next_, s_mask_ = self._train_queue.get()
 				# if s__ == NONE_STATE:
 				# 	shoooot = 1
 				if i==0:
-					s, a, r, s_, s_mask = s_, a_, r_, s__, s_mask_
+					s, a, r, s_next, s_mask = s_, a_, r_, s_next_, s_mask_
 				else:
 					s = np.row_stack((s, s_))
 					a = np.row_stack((a, a_))
 					r = np.row_stack((r, r_))
-					s_ = np.row_stack((s_, s__))
+					s_next = np.row_stack((s_next, s_next_))
 					s_mask = np.row_stack( (s_mask, s_mask_) )
 				i += 1
 
 				# print( s_, a_, r_, s__, s_mask_ )
 
-		# if len(s)==0:
-		# 	return
+		if len(s) > 200*MIN_BATCH: print("Optimizer alert! Minimizing train batch of %d" % len(s))
 
-		if len(s) > 5*MIN_BATCH: print("Optimizer alert! Minimizing train batch of %d" % len(s))
-
-		v = self.predict_v(s_)
+		v = self.predict_v(s_next)
 		r = r + GAMMA_N * v * s_mask	# set v to 0 where s_ is terminal state
 		
 		s_t, a_t, r_t, minimize = self.graph
@@ -242,8 +239,8 @@ class Brain:
 			return v
 
 	def run(self):
-		#while time.time()-start<RUN_TIME:
-		while True:
+		while time.time()-start<RUN_TIME:
+		# while True:
 			self.batch_predict()
 			self.batch_train()
 
@@ -337,20 +334,20 @@ class Agent:
 		self.R = ( self.R + r * GAMMA_N ) / GAMMA
 
 		if s_ is None:
-			# while len(self.memory) > 0:
-			# 	n = len(self.memory)
-			# 	s, a, r, s_ = get_sample(self.memory, n)
-			# 	train_push(s, a, r, s_)
-            #
-			# 	self.R = ( self.R - self.memory[0][2] ) / GAMMA
-			# 	self.memory.pop(0)
-			if len(self.memory) > 0:
+			while len(self.memory) > 0:
 				n = len(self.memory)
 				s, a, r, s_ = get_sample(self.memory, n)
 				train_push(s, a, r, s_)
 
 				self.R = ( self.R - self.memory[0][2] ) / GAMMA
-				self.memory.clear()
+				self.memory.pop(0)
+			# if len(self.memory) > 0:
+			# 	n = len(self.memory)
+			# 	s, a, r, s_ = get_sample(self.memory, n)
+			# 	train_push(s, a, r, s_)
+            #
+			# 	self.R = ( self.R - self.memory[0][2] ) / GAMMA
+			# 	self.memory.clear()
 
 			self.R = 0
 			# return
@@ -426,6 +423,15 @@ for e in envs:
 
 brain.run()
 
+#plot rewards
+time_series, reward_series = [], []
+while not a_time.empty():
+	time_series.append(a_time.get())
+	reward_series.append(a_reward.get())
+
+plt.plot( time_series, reward_series )
+plt.show()
+
 # time.sleep(RUN_TIME)
 
 for e in envs:
@@ -436,9 +442,5 @@ for e in envs:
 # opts.stop()
 
 print("Training finished")
-
-#plot rewards
-plt.plot( a_time, a_reward )
-plt.show()
 
 #env_test.run()
