@@ -39,7 +39,7 @@ def log_reward( R ):
 ENV = 'CartPole-v0'
 
 RUN_TIME = 30
-THREADS = 64
+THREADS = 1
 THREAD_DELAY = 0.001
 
 GAMMA = 0.99
@@ -122,9 +122,9 @@ class Brain:
 
 	def batch_train(self):
 
-		if self._train_queue.qsize() < MIN_BATCH:
-			time.sleep(0)	# yield
-			return
+		# if self._train_queue.qsize() < MIN_BATCH:
+		# 	time.sleep(0)	# yield
+		# 	return
 
 		if self._train_queue.qsize() < MIN_BATCH:	# more thread could have passed without lock
 			return 									# we can't yield inside lock
@@ -150,11 +150,11 @@ class Brain:
 			if self._train_queue.empty():
 				return
 
-			q = self._train_queue
-			while not q.empty():
-				# print(q.get())
-				q.get()
-			return
+			# q = self._train_queue
+			# while not q.empty():
+			# 	print(q.get())
+			# 	q.get()
+			# return
 
 			i = 0
 			while not self._train_queue.empty():
@@ -171,7 +171,7 @@ class Brain:
 					s_mask = np.row_stack( (s_mask, s_mask_) )
 				i += 1
 
-				# print( s, a, r, s_, s_mask )
+				# print( s_, a_, r_, s__, s_mask_ )
 
 		# if len(s)==0:
 		# 	return
@@ -187,12 +187,12 @@ class Brain:
 	def batch_predict(self):
 		global envs
 
-		if self._predict_queue.qsize() < MIN_BATCH:
-			time.sleep(0)	# yield
-			return
+		# if self._predict_queue.qsize() < MIN_BATCH:
+		# 	time.sleep(0)	# yield
+		# 	return
 
-			if self._predict_queue.qsize() < MIN_BATCH:	# more thread could have passed without lock
-				return
+		if self._predict_queue.qsize() < MIN_BATCH:	# more thread could have passed without lock
+			return
 				 									# we can't yield inside lock
 			# print( self._predict_queue.qsize() )
 			# print(self._predict_queue.empty())
@@ -296,18 +296,19 @@ class Agent:
 		def train_push(s, a, r, s_):
 			# s_next = s_ is None ? NONE_STATE : s_
 			# s_mask = s_ is None ? 0. : 1.
+			if s_ is None:
+				s_next = NONE_STATE
+				# s_next = np.zeros((1,4))
+				s_mask = 0.
+			else:
+				s_next = s_
+				s_mask = 1.
+			s = np.array([s])
+			a = np.array([a])
+			r = np.array([r])
+			s_next = np.array([s_next])
+			s_mask = np.array([s_mask])
 			with self._train_lock:
-				if s_ is None:
-					s_next = NONE_STATE
-					s_mask = 0.
-				else:
-					s_next = s_
-					s_mask = 1.
-				s = np.array([s])
-				a = np.array([a])
-				r = np.array([r])
-				s_next = np.array([s_next])
-				s_mask = np.array([s_mask])
 				self._train_queue.put( (s, a, r, s_next, s_mask) )
 
 			# with self._train_lock:
@@ -336,20 +337,20 @@ class Agent:
 		self.R = ( self.R + r * GAMMA_N ) / GAMMA
 
 		if s_ is None:
-			while len(self.memory) > 0:
+			# while len(self.memory) > 0:
+			# 	n = len(self.memory)
+			# 	s, a, r, s_ = get_sample(self.memory, n)
+			# 	train_push(s, a, r, s_)
+            #
+			# 	self.R = ( self.R - self.memory[0][2] ) / GAMMA
+			# 	self.memory.pop(0)
+			if len(self.memory) > 0:
 				n = len(self.memory)
 				s, a, r, s_ = get_sample(self.memory, n)
 				train_push(s, a, r, s_)
 
 				self.R = ( self.R - self.memory[0][2] ) / GAMMA
-				self.memory.pop(0)
-			# if len(self.memory) > 0:
-			# 	n = len(self.memory)
-			# 	s, a, r, s_ = get_sample(self.memory, n)
-			# 	train_push(s, a, r, s_)
-
-			# 	self.R = ( self.R - self.memory[0][2] ) / GAMMA
-			# 	self.memory.clear()
+				self.memory.clear()
 
 			self.R = 0
 			# return
@@ -382,7 +383,7 @@ class Environment(mp.Process):
 
 		R = 0
 		while True:         
-			time.sleep(THREAD_DELAY) # yield 
+			# time.sleep(THREAD_DELAY) # yield
 
 			if self.render: self.env.render()
 
@@ -401,7 +402,7 @@ class Environment(mp.Process):
 				break
 
 		log_reward( R )
-		# print("Total R:", R)
+		print("Total R:", R)
 
 	def run(self):
 		while not self.stop_signal:
