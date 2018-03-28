@@ -39,7 +39,7 @@ def log_reward( R ):
 ENV = 'CartPole-v0'
 
 RUN_TIME = 30
-THREADS = 20
+THREADS = 4
 THREAD_DELAY = 0.001
 
 GAMMA = 0.99
@@ -145,31 +145,31 @@ class Brain:
 		# 	s_mask_ = np.concatenate( (s_mask, self._train_queue[4].get()) )
 		# 	size += 1
 		# s, a, r, s_, s_mask = np.array([]), np.array([]), np.array([]), np.array([]), np.array([])
-		with self._train_lock:
+		# with self._train_lock:
 
-			if self._train_queue.empty():
-				return
+		if self._train_queue.empty():
+			return
 
-			# q = self._train_queue
-			# while not q.empty():
-			# 	print(q.get())
-			# 	q.get()
-			# return
+		# q = self._train_queue
+		# while not q.empty():
+		# 	print(q.get())
+		# 	q.get()
+		# return
 
-			i = 0
-			while not self._train_queue.empty():
-				s_, a_, r_, s_next_, s_mask_ = self._train_queue.get()
-				# if s__ == NONE_STATE:
-				# 	shoooot = 1
-				if i==0:
-					s, a, r, s_next, s_mask = s_, a_, r_, s_next_, s_mask_
-				else:
-					s = np.row_stack((s, s_))
-					a = np.row_stack((a, a_))
-					r = np.row_stack((r, r_))
-					s_next = np.row_stack((s_next, s_next_))
-					s_mask = np.row_stack( (s_mask, s_mask_) )
-				i += 1
+		i = 0
+		while not self._train_queue.empty():
+			s_, a_, r_, s_next_, s_mask_ = self._train_queue.get()
+			# if s__ == NONE_STATE:
+			# 	shoooot = 1
+			if i==0:
+				s, a, r, s_next, s_mask = s_, a_, r_, s_next_, s_mask_
+			else:
+				s = np.row_stack((s, s_))
+				a = np.row_stack((a, a_))
+				r = np.row_stack((r, r_))
+				s_next = np.row_stack((s_next, s_next_))
+				s_mask = np.row_stack( (s_mask, s_mask_) )
+			i += 1
 
 				# print( s_, a_, r_, s__, s_mask_ )
 
@@ -193,26 +193,26 @@ class Brain:
 				 									# we can't yield inside lock
 			# print( self._predict_queue.qsize() )
 			# print(self._predict_queue.empty())
-		with self._predict_lock:
+		# with self._predict_lock:
 			# ids = []
 			# s = []
 
-			if self._predict_queue.empty():
-				return
+		if self._predict_queue.empty():
+			return
 
-			i = 0
-			id = []
-			while not self._predict_queue.empty():
-				id_, s_ = self._predict_queue.get()
-				if i==0:
-					s = s_
-				else:
-				# item = self._predict_queue.get()
-				# print( item )
-				# 	id = np.row_stack((id, id_))
-					s = np.row_stack((s, s_))
-				id.append(id_)
-				i += 1
+		i = 0
+		id = []
+		while not self._predict_queue.empty():
+			id_, s_ = self._predict_queue.get()
+			if i==0:
+				s = s_
+			else:
+			# item = self._predict_queue.get()
+			# print( item )
+			# 	id = np.row_stack((id, id_))
+				s = np.row_stack((s, s_))
+			id.append(id_)
+			i += 1
 
 		# if len(s)==0:
 		# 	return
@@ -277,8 +277,8 @@ class Agent:
 
 		s = np.array([s])
 		# put the state in the prediction q
-		with self._predict_lock:
-			self._predict_queue.put((self.id, s))
+		# with self._predict_lock:
+		self._predict_queue.put((self.id, s))
 		# wait for the prediction to come back
 		p = self.wait_q.get()
 
@@ -305,8 +305,8 @@ class Agent:
 			r = np.array([r])
 			s_next = np.array([s_next])
 			s_mask = np.array([s_mask])
-			with self._train_lock:
-				self._train_queue.put( (s, a, r, s_next, s_mask) )
+			# with self._train_lock:
+			self._train_queue.put( (s, a, r, s_next, s_mask) )
 
 			# with self._train_lock:
 			# 	self._train_queue[0].put(s)
