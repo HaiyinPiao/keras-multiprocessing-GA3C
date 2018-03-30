@@ -31,6 +31,9 @@ start = time.time()
 a_time = mp.Queue()
 a_reward = mp.Queue()
 
+#multithreading for brain
+from threading import Thread
+
 def log_reward( R ):
 	a_time.put( time.time() - start )
 	a_reward.put( R )
@@ -85,6 +88,9 @@ class Brain:
 		self._predict_queue = mp.Queue()
 		self._predict_lock = mp.Lock()
 
+		self._predictors = []
+		self._trainers = []
+
 	def _build_model(self):
 
 		l_input = Input( batch_shape=(None, NUM_STATE) )
@@ -120,109 +126,6 @@ class Brain:
 
 		return s_t, a_t, r_t, minimize
 
-	def batch_train(self):
-
-		# if self._train_queue.qsize() < MIN_BATCH:
-		# 	time.sleep(0)	# yield
-		# 	return
-
-		if self._train_queue.qsize() < MIN_BATCH:	# more thread could have passed without lock
-			return 									# we can't yield inside lock
-
-		# s = np.array([])
-		# a = np.array([])
-		# r = np.array([])
-		# s_ = np.array([])
-		# s_mask = np.array([])
-
-		# size = 1
-		# while not self._train_queue.empty():
-		# 	# print( self._train_queue[0].get() )
-		# 	s = np.concatenate( (s, self._train_queue[0].get()) )
-		# 	a = np.concatenate( (a, self._train_queue[1].get()) )
-		# 	r = np.concatenate( (r, self._train_queue[2].get()) )
-		# 	s_ = np.concatenate( (s_, self._train_queue[3].get()) )
-		# 	s_mask_ = np.concatenate( (s_mask, self._train_queue[4].get()) )
-		# 	size += 1
-		# s, a, r, s_, s_mask = np.array([]), np.array([]), np.array([]), np.array([]), np.array([])
-		# with self._train_lock:
-
-		if self._train_queue.empty():
-			return
-
-		# q = self._train_queue
-		# while not q.empty():
-		# 	print(q.get())
-		# 	q.get()
-		# return
-
-		i = 0
-		while not self._train_queue.empty():
-			s_, a_, r_, s_next_, s_mask_ = self._train_queue.get()
-			# if s__ == NONE_STATE:
-			# 	shoooot = 1
-			if i==0:
-				s, a, r, s_next, s_mask = s_, a_, r_, s_next_, s_mask_
-			else:
-				s = np.row_stack((s, s_))
-				a = np.row_stack((a, a_))
-				r = np.row_stack((r, r_))
-				s_next = np.row_stack((s_next, s_next_))
-				s_mask = np.row_stack( (s_mask, s_mask_) )
-			i += 1
-
-				# print( s_, a_, r_, s__, s_mask_ )
-
-		if len(s) > 200*MIN_BATCH: print("Optimizer alert! Minimizing train batch of %d" % len(s))
-
-		v = self.predict_v(s_next)
-		r = r + GAMMA_N * v * s_mask	# set v to 0 where s_ is terminal state
-		
-		s_t, a_t, r_t, minimize = self.graph
-		self.session.run(minimize, feed_dict={s_t: s, a_t: a, r_t: r})
-
-	def batch_predict(self):
-		global envs
-
-		# if self._predict_queue.qsize() < MIN_BATCH:
-		# 	time.sleep(0)	# yield
-		# 	return
-
-		if self._predict_queue.qsize() < MIN_BATCH:	# more thread could have passed without lock
-			return
-				 									# we can't yield inside lock
-			# print( self._predict_queue.qsize() )
-			# print(self._predict_queue.empty())
-		# with self._predict_lock:
-			# ids = []
-			# s = []
-
-		if self._predict_queue.empty():
-			return
-
-		i = 0
-		id = []
-		while not self._predict_queue.empty():
-			id_, s_ = self._predict_queue.get()
-			if i==0:
-				s = s_
-			else:
-			# item = self._predict_queue.get()
-			# print( item )
-			# 	id = np.row_stack((id, id_))
-				s = np.row_stack((s, s_))
-			id.append(id_)
-			i += 1
-
-		# if len(s)==0:
-		# 	return
-
-		p = self.predict_p(np.array(s))
-
-		for j in range(i):
-			if id[j] < len(envs):
-				envs[id[j]].agent.wait_q.put(p[j])
-
 	def predict(self, s):
 		with self.default_graph.as_default():
 			p, v = self.model.predict(s)		
@@ -238,11 +141,141 @@ class Brain:
 			p, v = self.model.predict(s)		
 			return v
 
+	# def run(self):
+	# 	while time.time()-start<RUN_TIME:
+	# 	# while True:
+	# 		self.batch_predict()
+	# 		self.batch_train()
+
+	def add_predictor(self):
+		self._predictors.append(ThreadPredictor(self, len(self._predictors)))
+		self._predictors[-1].start()
+
+	def add_trainer(self):
+		self._trainers.append(ThreadTrainer(self, len(self._trainers)))
+		self._trainers[-1].start()
+
+class ThreadPredictor(Thread):
+	def __init__(self, brain, id):
+		super(ThreadPredictor, self).__init__()
+		self.setDaemon(True)
+
+		self._id = id
+		self._brain = brain
+		self._exit_flag = False
+
 	def run(self):
-		while time.time()-start<RUN_TIME:
-		# while True:
-			self.batch_predict()
-			self.batch_train()
+		while not self._exit_flag:
+			global envs
+
+			# if self._predict_queue.qsize() < MIN_BATCH:
+			# 	time.sleep(0)	# yield
+			# 	return
+
+			if self._brain._predict_queue.qsize() < MIN_BATCH:	# more thread could have passed without lock
+				return
+					 									# we can't yield inside lock
+				# print( self._predict_queue.qsize() )
+				# print(self._predict_queue.empty())
+			# with self._predict_lock:
+				# ids = []
+				# s = []
+
+			if self._brain._predict_queue.empty():
+				return
+
+			i = 0
+			id = []
+			while not self._brain._predict_queue.empty():
+				id_, s_ = self._brain._predict_queue.get()
+				if i==0:
+					s = s_
+				else:
+				# item = self._predict_queue.get()
+				# print( item )
+				# 	id = np.row_stack((id, id_))
+					s = np.row_stack((s, s_))
+				id.append(id_)
+				i += 1
+
+			# if len(s)==0:
+			# 	return
+
+			p = self._brain.predict_p(np.array(s))
+
+			for j in range(i):
+				if id[j] < len(envs):
+					envs[id[j]].agent.wait_q.put(p[j])
+
+class ThreadTrainer(Thread):
+	def __init__(self, brain, id):
+		super(ThreadTrainer, self).__init__()
+		self.setDaemon(True)
+
+		self._id = id
+		self._brain = brain
+		self._exit_flag = False
+
+	def run(self):
+		while not self._exit_flag:
+			# if self._train_queue.qsize() < MIN_BATCH:
+			# 	time.sleep(0)	# yield
+			# 	return
+
+			if self._brain._train_queue.qsize() < MIN_BATCH:	# more thread could have passed without lock
+				return 									# we can't yield inside lock
+
+			# s = np.array([])
+			# a = np.array([])
+			# r = np.array([])
+			# s_ = np.array([])
+			# s_mask = np.array([])
+
+			# size = 1
+			# while not self._train_queue.empty():
+			# 	# print( self._train_queue[0].get() )
+			# 	s = np.concatenate( (s, self._train_queue[0].get()) )
+			# 	a = np.concatenate( (a, self._train_queue[1].get()) )
+			# 	r = np.concatenate( (r, self._train_queue[2].get()) )
+			# 	s_ = np.concatenate( (s_, self._train_queue[3].get()) )
+			# 	s_mask_ = np.concatenate( (s_mask, self._train_queue[4].get()) )
+			# 	size += 1
+			# s, a, r, s_, s_mask = np.array([]), np.array([]), np.array([]), np.array([]), np.array([])
+			# with self._train_lock:
+
+			if self._brain._train_queue.empty():
+				return
+
+			# q = self._train_queue
+			# while not q.empty():
+			# 	print(q.get())
+			# 	q.get()
+			# return
+
+			i = 0
+			while not self._brain._train_queue.empty():
+				s_, a_, r_, s_next_, s_mask_ = self._brain._train_queue.get()
+				# if s__ == NONE_STATE:
+				# 	shoooot = 1
+				if i==0:
+					s, a, r, s_next, s_mask = s_, a_, r_, s_next_, s_mask_
+				else:
+					s = np.row_stack((s, s_))
+					a = np.row_stack((a, a_))
+					r = np.row_stack((r, r_))
+					s_next = np.row_stack((s_next, s_next_))
+					s_mask = np.row_stack( (s_mask, s_mask_) )
+				i += 1
+
+					# print( s_, a_, r_, s__, s_mask_ )
+
+			if len(s) > 200*MIN_BATCH: print("Optimizer alert! Minimizing train batch of %d" % len(s))
+
+			v = self._brain.predict_v(s_next)
+			r = r + GAMMA_N * v * s_mask	# set v to 0 where s_ is terminal state
+			
+			s_t, a_t, r_t, minimize = self._brain.graph
+			self._brain.session.run(minimize, feed_dict={s_t: s, a_t: a, r_t: r})
 
 #---------
 frames = 0
@@ -415,13 +448,32 @@ NUM_ACTIONS = env.env.action_space.n
 NONE_STATE = np.zeros(NUM_STATE)
 
 brain = Brain()	# brain is global in A3C
+brain.add_predictor()
+brain.add_trainer()
+
 #env_test = Environment(id=0, predict_queue=brain._predict_queue, train_queue=brain._train_queue, train_lock=brain._train_lock, render=True, eps_start=0., eps_end=0.)
 envs = [Environment(id=i, predict_queue=brain._predict_queue, predict_lock=brain._predict_lock, train_queue=brain._train_queue, train_lock=brain._train_lock) for i in range(THREADS)]
 
 for e in envs:
 	e.start()
 
-brain.run()
+# brain.run()
+
+# while time.time()-start<RUN_TIME:
+# 	time.sleep(0)
+
+time.sleep(RUN_TIME)
+
+for e in envs:
+	e.stop()
+for e in envs:
+	e.join()
+
+for p in brain._predictors:
+	p._exit_flag = True
+
+for t in brain._trainers:
+	t._exit_flag = True
 
 #plot rewards
 time_series, reward_series = [], []
@@ -431,13 +483,6 @@ while not a_time.empty():
 
 plt.plot( time_series, reward_series )
 plt.show()
-
-# time.sleep(RUN_TIME)
-
-for e in envs:
-	e.stop()
-for e in envs:
-	e.join()
 
 # opts.stop()
 
