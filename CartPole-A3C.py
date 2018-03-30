@@ -42,8 +42,10 @@ def log_reward( R ):
 ENV = 'CartPole-v0'
 
 RUN_TIME = 30
-THREADS = 4
+THREADS = 12
 THREAD_DELAY = 0.001
+PREDICTORS = 1
+TRAINERS = 1
 
 GAMMA = 0.99
 
@@ -173,7 +175,7 @@ class ThreadPredictor(Thread):
 			# 	return
 
 			if self._brain._predict_queue.qsize() < MIN_BATCH:	# more thread could have passed without lock
-				return
+				continue
 					 									# we can't yield inside lock
 				# print( self._predict_queue.qsize() )
 				# print(self._predict_queue.empty())
@@ -182,7 +184,7 @@ class ThreadPredictor(Thread):
 				# s = []
 
 			if self._brain._predict_queue.empty():
-				return
+				continue
 
 			i = 0
 			id = []
@@ -223,7 +225,7 @@ class ThreadTrainer(Thread):
 			# 	return
 
 			if self._brain._train_queue.qsize() < MIN_BATCH:	# more thread could have passed without lock
-				return 									# we can't yield inside lock
+				continue 									# we can't yield inside lock
 
 			# s = np.array([])
 			# a = np.array([])
@@ -244,7 +246,7 @@ class ThreadTrainer(Thread):
 			# with self._train_lock:
 
 			if self._brain._train_queue.empty():
-				return
+				continue
 
 			# q = self._train_queue
 			# while not q.empty():
@@ -448,8 +450,10 @@ NUM_ACTIONS = env.env.action_space.n
 NONE_STATE = np.zeros(NUM_STATE)
 
 brain = Brain()	# brain is global in A3C
-brain.add_predictor()
-brain.add_trainer()
+for i in range(PREDICTORS):
+	brain.add_predictor()
+for i in range(TRAINERS):
+	brain.add_trainer()
 
 #env_test = Environment(id=0, predict_queue=brain._predict_queue, train_queue=brain._train_queue, train_lock=brain._train_lock, render=True, eps_start=0., eps_end=0.)
 envs = [Environment(id=i, predict_queue=brain._predict_queue, predict_lock=brain._predict_lock, train_queue=brain._train_queue, train_lock=brain._train_lock) for i in range(THREADS)]
