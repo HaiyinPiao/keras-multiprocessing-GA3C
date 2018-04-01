@@ -35,7 +35,7 @@ def log_reward( R ):
 ENV = 'CartPole-v0'
 
 RUN_TIME = 30
-THREADS = 8
+THREADS = 16
 THREAD_DELAY = 0.001
 PREDICTORS = 1
 TRAINERS = 1
@@ -170,7 +170,7 @@ class ThreadPredictor(Thread):
 			id.append(id_)
 			i += 1
 
-		if s==[]:
+		if s == []:
 			return
 
 		p = self._brain.predict_p(np.array(s))
@@ -219,7 +219,7 @@ class ThreadTrainer(Thread):
 		if s == []:
 			return
 
-		if len(s) > 200*MIN_BATCH: print("Optimizer alert! Minimizing train batch of %d" % len(s))
+		if len(s) > 100*MIN_BATCH: print("Optimizer alert! Minimizing train batch of %d" % len(s))
 
 		v = self._brain.predict_v(s_next)
 		r = r + GAMMA_N * v * s_mask	# set v to 0 where s_ is terminal state
@@ -325,7 +325,7 @@ class Agent:
 class Environment(mp.Process):
 	stop_signal = False
 
-	def __init__(self, id, predict_queue, predict_lock, train_queue, train_lock, render=False, eps_start=EPS_START, eps_end=EPS_STOP, eps_steps=EPS_STEPS):
+	def __init__(self, id, predict_queue, predict_lock, train_queue, train_lock, render=False, eps_start=EPS_START, eps_end=EPS_STOP, eps_steps=EPS_STEPS, train=True):
 		mp.Process.__init__(self)
 
 		self.id = id
@@ -333,14 +333,15 @@ class Environment(mp.Process):
 		self.env = gym.make(ENV)
 		self.agent = Agent(id, eps_start, eps_end, eps_steps, predict_queue, predict_lock, train_queue, train_lock)
 		self._exit_flag = mp.Value('i', 0)
+		self._train = train
 
 	def runEpisode(self):
 		s = self.env.reset()
 
 		R = 0
 		while True:      
-			time.sleep(THREAD_DELAY)   
-			if self.render: 
+			time.sleep(THREAD_DELAY)
+			if self.render:
 				self.env.render()
 			a = self.agent.act(s)
 			s_, r, done, info = self.env.step(a)
@@ -348,7 +349,8 @@ class Environment(mp.Process):
 			if done: # terminal state
 				s_ = None
 
-			self.agent.train(s, a, r, s_)
+			if self._train:
+				self.agent.train(s, a, r, s_)
 
 			s = s_
 			R += r
@@ -372,22 +374,19 @@ NUM_STATE = env.observation_space.shape[0]
 NUM_ACTIONS = env.action_space.n
 NONE_STATE = np.zeros(NUM_STATE)
 
-
 brain = Brain()	# brain is global in A3C
 for i in range(PREDICTORS):
 	brain.add_predictor()
 for i in range(TRAINERS):
 	brain.add_trainer()
 
-env_test = Environment(id=-1, predict_queue=brain._predict_queue, predict_lock=brain._predict_lock, train_queue=brain._train_queue, train_lock=brain._train_lock, render=True, eps_start=0., eps_end=0.)
+# env_test = Environment(id=-1, predict_queue=brain._predict_queue, predict_lock=brain._predict_lock, train_queue=brain._train_queue, train_lock=brain._train_lock, render=True, eps_start=0., eps_end=0., train=False)
 envs = [Environment(id=i, predict_queue=brain._predict_queue, predict_lock=brain._predict_lock, train_queue=brain._train_queue, train_lock=brain._train_lock) for i in range(THREADS)]
 
 for e in envs:
 	e.start()
 
 time.sleep(RUN_TIME)
-
-print("Training finished")
 
 #plot rewards
 # time_series, reward_series = [], []
@@ -398,11 +397,10 @@ print("Training finished")
 # plt.plot( time_series, reward_series )
 # plt.show()
 
-env_test.run()
-
 for e in envs:
 	e.stop()
 for e in envs:
+	e.terminate()
 	e.join()
 
 for p in brain._predictors:
@@ -411,5 +409,10 @@ for t in brain._trainers:
 	t.stop()
 for p in brain._predictors:
 	p.join()
+	brain._predictors.pop()
 for t in brain._trainers:
 	t.join()
+	brain._trainers.pop()
+
+print("Training finished")
+# env_test.run()
